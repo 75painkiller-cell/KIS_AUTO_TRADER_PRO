@@ -17,7 +17,7 @@ TARGET_BUY_AMOUNT = 1000000
 # 🧪 [마스터키] 테스트 모드 스위치
 # - True  : 주말/야간 무시하고 강제 테스트 진행
 # - False : 실전 모드 (시간 엄수 철통 방어)
-IS_TEST_MODE = False  # 🚨 실전 가동을 위해 False로 세팅
+IS_TEST_MODE = False  # 🚨 모의투자 테스트 구동 중
 # ==========================================
 
 # 중복 알림 방지용 변수
@@ -80,7 +80,7 @@ def execute_trading_logic():
     telegram.send_message(msg)
     _last_ready_day = today_str
 
-  # 🔔 [이벤트 2] 평일 장 시작 10분 전 / 동시호가 진입 알림 (08:50) 👉 [수정됨]
+  # 🔔 [이벤트 2] 평일 장 시작 10분 전 / 동시호가 진입 알림 (08:50)
   if now.weekday() < 5 and now.hour == 8 and now.minute >= 50 and _last_open_day != today_str:
     cash, holdings = api_kis.get_account_status()
     msg = f"🔔 <b>[08:50 동시호가 시작 / 장 개장 10분 전]</b>\n"
@@ -183,9 +183,10 @@ def execute_trading_logic():
   # 🎯 6. 종목 모니터링 (트레일링 스탑 및 매수 로직)
   for symbol, name in TARGET_SYMBOLS.items():
     price = api_kis.get_current_price(symbol)
-    time.sleep(1.0)
+    time.sleep(1.0)  # 👈 현재가 조회 후 휴식
     
     ma5, ma20, rsi, vol, prev_close, bb_upper, bb_lower, macd = api_kis.calculate_indicators(symbol)
+    time.sleep(1.5)  # 👈 지표 계산 후 서버 부하 방지용 추가 휴식
 
     if price == 0 or ma5 == 0:
       api_kis.log(f"⚠️ [{name.strip()}] 데이터 조회 대기 중...")
@@ -234,13 +235,25 @@ def execute_trading_logic():
       trend = "🟢 상승" if ma5 > ma20 else "🔴 하락"
       chg_rate = ((price - prev_close) / prev_close) * 100 if prev_close else 0.0
       
+      # 💡 [추가] 매수 조건 충족 여부 및 미달 사유 실시간 판단
+      is_ma_ok = ma5 > ma20
+      is_rsi_ok = rsi < 70
+      if is_ma_ok and is_rsi_ok:
+          buy_status = f"🟢 [매수 조건 충족! 현재가 {price:,}원 즉시 진입 대기]"
+      else:
+          reasons = []
+          if not is_ma_ok: reasons.append("5일<20일선")
+          if not is_rsi_ok: reasons.append("RSI 70이상")
+          buy_status = f"⏳ [매수 대기 중 (미달 사유: {', '.join(reasons)})]"
+
       print(f"  🔸 {name.strip()} | 현재가: {price:,}원 ({chg_rate:+.2f}%) | 당일 거래량: {vol:,}주")
       print(f"    📈 추세: {trend} (5일: {ma5:,.0f}원 / 20일: {ma20:,.0f}원)")
       print(f"    📊 지표: RSI: {rsi} | MACD: {macd} | BB상단: {bb_upper:,.0f}원 | BB하단: {bb_lower:,.0f}원")
+      print(f"    🎯 매수 상태: {buy_status}")
 
       if now.hour == 15 and now.minute >= 10 and not IS_TEST_MODE: continue
 
-      if ma5 > ma20 and rsi < 70 and cash >= TARGET_BUY_AMOUNT:
+      if is_ma_ok and is_rsi_ok and cash >= TARGET_BUY_AMOUNT:
         calc_qty = max(1, int(TARGET_BUY_AMOUNT / price))
         api_kis.log(f"  🚀 [{name.strip()}] 골든크로스 매수 포착! {calc_qty}주 매수 실행")
         is_success = api_kis.send_order(symbol, True, calc_qty, price=price, name=name.strip())
