@@ -54,18 +54,17 @@ def main():
             except Exception as e:
                 print(f"⚠️ [잔고/보유종목 조회 오류]: {e}", flush=True)
 
-            # 🟡 타겟 종목 현재가 조회 (상세 브리핑 추가 + API 에러 원천 차단)
-            print("🎯 [타겟 감시 종목 현재가 🟡 5일선이 20일선 돌파(골든크로스) 시 매수 대기]", flush=True)
+            # 🟡 타겟 종목 현재가 조회 (코드 로직 조건 충족 시 매수 안내 브리핑)
+            print("🎯 [타겟 감시 종목 현재가 🟡 내부 코드 로직 조건 충족 시 매수 대기]", flush=True)
             for code, name in TARGET_ITEMS.items():
                 try:
-                    # ⚠️ [핵심] API 초당 요청 제한 완벽 방어! 여기서 종목마다 1초씩 쉬면서 조심스럽게 물어봅니다.
+                    # ⚠️ [핵심] API 초당 요청 제한 완벽 방어! 종목마다 1초씩 쉬면서 조회합니다.
                     time.sleep(1) 
                     
-                    # 현재가 조회 (주의: 기존에 쓰시던 함수명이 get_current_price가 아니라면 그 이름으로 바꿔주세요!)
                     price = api_kis.get_current_price(code) 
                     print(f"  - {name}: {format(price, ',')}원", flush=True)
                 except Exception as e:
-                    print(f"  - {name}: 조회 대기 중... (현재가 호출 함수 점검 필요)", flush=True)
+                    print(f"  - {name}: 조회 대기 중...", flush=True)
 
             print("==================================================", flush=True)
 
@@ -78,7 +77,7 @@ def main():
                 except Exception as e:
                     print(f"⚠️ [텔레그램 정기 브리핑 실패]: {e}", flush=True)
 
-            # 🚀 30초 대기 (이 시간이 곧 매매 감시 주기가 됩니다)
+            # 🚀 30초 대기
             time.sleep(30)
 
     except KeyboardInterrupt:
