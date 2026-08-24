@@ -48,4 +48,4 @@ def main():
         telegram.send_msg(f"<b>[🚨 시스템 오류]</b>\n{e}")
 
 if __name__ == "__main__":
-    main(0.2)
+    main(0.5)
