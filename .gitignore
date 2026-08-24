@@ -1,0 +1,15 @@
+# 파이썬 캐시 파일 (용량만 차지하므로 제외)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 보안 및 환경 변수 파일 (★절대 유출 방지★)
+.env
+token.json
+settings.json
+
+# 로그 및 실시간 상태 파일 (불필요한 충돌 방지)
+logs/
+*.log
+trade.log
+trade_state.json
