@@ -40,7 +40,7 @@ def main():
                     print(f"⚠️ [텔레그램 정기 브리핑 실패]: {e}", flush=True)
 
             # 10초 대기
-            time.sleep(10)
+            time.sleep(20)
 
     except KeyboardInterrupt:
         telegram.send_msg("<b>[🛑 시스템 종료]</b> 수동으로 중단되었습니다.")
