@@ -27,7 +27,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # 2. 계좌 및 환경 설정
 # -------------------------------
 # 모의투자 여부 (True: 모의투자 / False: 실전투자)
-IS_PAPER = True
+IS_PAPER = False
 URL_BASE = "https://openapivts.koreainvestment.com:29443" if IS_PAPER else "https://openapi.koreainvestment.com:9443"
 
 # -------------------------------
