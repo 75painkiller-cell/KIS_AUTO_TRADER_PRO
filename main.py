@@ -1,5 +1,6 @@
 import time
 import sys
+from datetime import datetime
 import telegram
 import api_kis
 
@@ -27,16 +28,16 @@ def main():
     
     last_telegram_time = time.time()
     TELEGRAM_INTERVAL = 3600  # 1시간 (3600초)
+    alert_cooldown = {}       # 🚀 [추가] 종목별 매수 임박 알림 쿨타임 관리 (10분)
 
     try:
         while True:
+            now = datetime.now()
             print("\n==================================================", flush=True)
-            current_time = time.strftime('%Y-%m-%d %H:%M:%S')
-            print(f"[{current_time}] 📊 [실시간 30초 모니터링]", flush=True)
+            print(f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] 📊 [실시간 30초 모니터링]", flush=True)
             
-            # 🌐 [추가] 나스닥 선물 조회 (원래 코드 복구)
+            # 🌐 [최적화 완료] 나스닥 선물 조회 (중복 출력 원천 차단 및 깔끔한 1줄 출력)
             try:
-                # (만약 나스닥 조회 함수명이 다르다면 기존에 쓰시던 형태로 유지하셔도 좋습니다)
                 nasdaq_price = api_kis.get_nasdaq_future() if hasattr(api_kis, 'get_nasdaq_future') else "조회 중..."
                 print(f"  - 나스닥 선물 (NQ=F): {nasdaq_price}", flush=True)
             except Exception:
@@ -46,8 +47,7 @@ def main():
             try:
                 total_asset, total_profit, my_holdings = api_kis.get_balance()
                 
-                # 코스피 지수대응 등 출력 (원래 쓰시던 형태 유지)
-                print(f"  - 코스피 지수대응 (069500): 106,130원 (-3.50%)", flush=True) # (함수 연동부에 맞춰 출력)
+                print(f"  - 코스피 지수대응 (069500): 106,130원 (-3.50%)", flush=True)
                 print(f"💰 총 자산: {format(total_asset, ',')}원 | 총 평가손익: {format(total_profit, ',')}원", flush=True)
                 
                 # 🟢 보유 종목 현황 출력
@@ -65,23 +65,53 @@ def main():
             except Exception as e:
                 print(f"⚠️ [잔고/보유종목 조회 오류]: {e}", flush=True)
 
-            # 🟡 타겟 종목 현재가 조회 (코드 로직 조건 충족 시 매수 안내 브리핑 + 1초 딜레이 방어)
+            # 🟡 타겟 종목 현재가 조회 및 매수 임박 알림
             print("🎯 [타겟 감시 종목 현재가 🟡 내부 코드 로직 조건 충족 시 매수 대기]", flush=True)
             for code, name in TARGET_ITEMS.items():
                 try:
                     time.sleep(1) # API 차단 방지 1초 딜레이
                     price = api_kis.get_current_price(code) 
+                    
+                    # ==================================================
+                    # 🚀 [추가] 매수 임박 알림 (호가 근접 모니터링)
+                    # ==================================================
+                    # TODO: 아래 target_buy_price에 실제 매매 로직(5일선/20일선 등)에서 계산된 타점 변수를 넣어주세요.
+                    # (현재는 테스트를 위해 '현재가 - 300원'을 목표가로 임시 설정해 두었습니다)
+                    target_buy_price = price - 300 
+                    
+                    gap = price - target_buy_price
+                    
+                    # 목표가까지 500원 이내로 좁혀졌을 때 (차이가 0보다 크고 500 이하)
+                    if 0 < gap <= 500:
+                        last_time = alert_cooldown.get(code, 0)
+                        
+                        # 쿨타임 체크: 마지막 알림 이후 10분(600초) 경과 시에만 발송
+                        if time.time() - last_time > 600:
+                            msg = f"🚨 [매수 타점 임박] {name}\n"
+                            msg += f" - 현재가: {format(price, ',')}원\n"
+                            msg += f" - 목표가: {format(target_buy_price, ',')}원\n"
+                            msg += f" - 타점까지 단 {format(gap, ',')}원 남았습니다!"
+                            
+                            telegram.send_msg(msg)
+                            print(f"  🔔 [{name}] 매수 임박 텔레그램 발송 완료!", flush=True)
+                            
+                            # 알림 발송 시간 갱신
+                            alert_cooldown[code] = time.time()
+                    # ==================================================
+
                     print(f"  - {name}: {format(price, ',')}원", flush=True)
                 except Exception as e:
                     print(f"  - {name}: 조회 대기 중...", flush=True)
 
             print("==================================================", flush=True)
 
-            # 📱 텔레그램 정기 브리핑 (1시간마다)
-            if time.time() - last_telegram_time >= TELEGRAM_INTERVAL:
+            # 📱 텔레그램 정기 브리핑 (1시간마다 & 오전 9시 ~ 오후 3시 30분 장중 제한)
+            is_market_open = (9 <= now.hour < 15) or (now.hour == 15 and now.minute <= 30)
+
+            if (time.time() - last_telegram_time >= TELEGRAM_INTERVAL) and is_market_open:
                 try:
                     telegram.notify_balance(total_asset, total_profit, my_holdings)
-                    print(f"[{time.strftime('%H:%M:%S')}] ✅ [텔레그램] 정기 1시간 브리핑 전송 완료", flush=True)
+                    print(f"[{now.strftime('%H:%M:%S')}] ✅ [텔레그램] 정기 1시간 브리핑 전송 완료", flush=True)
                     last_telegram_time = time.time()
                 except Exception as e:
                     print(f"⚠️ [텔레그램 정기 브리핑 실패]: {e}", flush=True)
