@@ -95,3 +95,91 @@ def get_balance():
             })
             
     return total_asset, total_profit, holdings
+
+def get_current_price(code):
+    if not ACCESS_TOKEN:
+        get_token()
+        
+    url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price" 
+    headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {ACCESS_TOKEN}",
+        "appkey": APP_KEY,
+        "appsecret": APP_SECRET,
+        "tr_id": "FHKST01010100"
+    }
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_INPUT_ISCD": code
+    }
+    
+    try:
+        res = requests.get(url, headers=headers, params=params, timeout=5)
+        res.raise_for_status()
+        data = res.json()
+        
+        if data.get('rt_cd') == '0':
+            return int(data['output']['stck_prpr'])
+        else:
+            print(f"⚠️ 현재가 조회 API 거부: {data.get('msg1', '알 수 없는 오류')}")
+            return None
+    except Exception as e:
+        print(f"⚠️ 현재가 조회 통신 에러: {e}")
+        return None
+def order_cash(code, qty, is_buy=True):
+    """
+    국내 주식 시장가 매수/매도 주문 (모의투자 전용)
+    - is_buy=True: 매수 / is_buy=False: 매도
+    """
+    if not ACCESS_TOKEN:
+        get_token()
+
+    url = f"{URL_BASE}/uapi/domestic-stock/v1/trading/order-cash"
+    
+    # 모의투자(VTS) 현금 주문 TR_ID (매수: VTTC0802U, 매도: VTTC0801U)
+    tr_id = "VTTC0802U" if is_buy else "VTTC0801U"
+    
+    headers = {
+        "Content-Type": "application/json",
+        "authorization": f"Bearer {ACCESS_TOKEN}",
+        "appKey": APP_KEY,
+        "appSecret": APP_SECRET,
+        "tr_id": tr_id
+    }
+    
+    cano = ACCOUNT_NUM[:8] if ACCOUNT_NUM else ""
+    acnt_prdt_cd = ACCOUNT_NUM[-2:] if ACCOUNT_NUM else ""
+
+    body = {
+        "CANO": cano,
+        "ACNT_PRDT_CD": acnt_prdt_cd,
+        "PDNO": code,
+        "ORD_DVSN": "01", # 01: 시장가
+        "ORD_QTY": str(qty),
+        "ORD_UNPR": "0"   # 시장가 주문 시 단가는 0
+    }
+    
+    try:
+        res = requests.post(url, headers=headers, data=json.dumps(body), timeout=5)
+        res.raise_for_status()
+        data = res.json()
+        
+        order_side = "매수" if is_buy else "매도"
+        
+        if data.get('rt_cd') == '0':
+            print(f"✅ [주문 성공] {code} {qty}주 시장가 {order_side} 접수 완료")
+            return True
+        else:
+            print(f"❌ [주문 실패] {code} {order_side}: {data.get('msg1', '에러 사유 알 수 없음')}")
+            return False
+    except Exception as e:
+        print(f"⚠️ 주문 API 통신 에러: {e}")
+        return False
+
+def buy_market_order(code, qty):
+    """시장가 매수"""
+    return order_cash(code, qty, is_buy=True)
+
+def sell_market_order(code, qty):
+    """시장가 매도"""
+    return order_cash(code, qty, is_buy=False)

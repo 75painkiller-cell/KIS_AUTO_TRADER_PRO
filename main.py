@@ -1,130 +1,104 @@
 import time
-import sys
 from datetime import datetime
-import telegram
 import api_kis
+import global_data  
+from my_logger import logger  
+import telegram_msg  
 
-# 🎯 감시할 타겟 종목 리스트 (KODEX ETF 4종목)
-TARGET_ITEMS = {
+# 🔥 테스트 모드 (True: 주말/새벽 무시하고 무조건 24시간 가동, False: 평일 장 시간에만 가동)
+TEST_MODE = True  
+
+# 내가 사고팔 목표 종목들
+TARGETS = {
     "069500": "KODEX 200",
     "114800": "KODEX 인버스",
     "229200": "KODEX 코스닥150",
     "251340": "KODEX 코스닥150선물인버스"
 }
 
+# 한국 증시 분위기 파악용 대장주 (나침반)
+LEADERS = {
+    "005930": "삼성전자",
+    "247540": "에코프로비엠"
+}
+
+def is_market_open():
+    """현재가 정규장 시간(평일 09:00 ~ 15:30)인지 확인"""
+    now = datetime.now()
+    if now.weekday() > 4: 
+        return False
+    market_start = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    market_end = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    return market_start <= now <= market_end
+
 def main():
-    print("🚀 시스템 가동 시작 (실시간 감시 모니터링)", flush=True)
-    
-    # 1. 시작 시 최초 알림 및 잔고 브리핑
-    try:
-        telegram.notify_start()
-        total_asset, total_profit, my_holdings = api_kis.get_balance()
-        telegram.notify_balance(total_asset, total_profit, my_holdings)
-        print("✅ 초기 잔고 브리핑 전송 완료", flush=True)
-    except Exception as e:
-        print(f"⚠️ 초기 잔고 조회 실패: {e}", flush=True)
+    start_msg = "🚀 KIS 자동매매 봇 가동 시작! (모든 지표 탑재 완료)"
+    logger.info(start_msg)
+    telegram_msg.send_message(start_msg) 
 
-    print("🟢 실시간 30초 감시 모드 진입", flush=True)
-    
-    last_telegram_time = time.time()
-    TELEGRAM_INTERVAL = 3600  # 1시간 (3600초)
-    alert_cooldown = {}       # 🚀 [추가] 종목별 매수 임박 알림 쿨타임 관리 (10분)
+    while True:
+        try:
+            # 1. 휴식 시간 체크
+            if not TEST_MODE and not is_market_open():
+                logger.info("💤 장 마감/휴장 시간입니다. 1분 후 다시 체크합니다.")
+                time.sleep(60) 
+                continue 
 
-    try:
-        while True:
-            now = datetime.now()
-            print("\n==================================================", flush=True)
-            print(f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] 📊 [실시간 30초 모니터링]", flush=True)
+            logger.info("=" * 50)
+            logger.info("📊 시스템 상태 점검")
             
-            # 🌐 [최적화 완료] 나스닥 선물 조회 (중복 출력 원천 차단 및 깔끔한 1줄 출력)
-            try:
-                nasdaq_price = api_kis.get_nasdaq_future() if hasattr(api_kis, 'get_nasdaq_future') else "조회 중..."
-                print(f"  - 나스닥 선물 (NQ=F): {nasdaq_price}", flush=True)
-            except Exception:
-                print(f"  - 나스닥 선물 (NQ=F): 조회 중...", flush=True)
+            # 2. 미국 시장 확인 (일기예보)
+            logger.info("🌍 [미국/글로벌 지표]")
+            nq_price = global_data.get_nasdaq_futures()
+            vix_price = global_data.get_vix()
+            usdkrw = global_data.get_usdkrw()
+            sox = global_data.get_sox()
+            us10y = global_data.get_us_10y_yield()
+            btc = global_data.get_bitcoin()
 
-            # 2. 잔고 및 보유 종목 조회
-            try:
-                total_asset, total_profit, my_holdings = api_kis.get_balance()
-                
-                print(f"  - 코스피 지수대응 (069500): 106,130원 (-3.50%)", flush=True)
-                print(f"💰 총 자산: {format(total_asset, ',')}원 | 총 평가손익: {format(total_profit, ',')}원", flush=True)
-                
-                # 🟢 보유 종목 현황 출력
-                print("📝 [현재 보유 종목 현황 🟢 최고점 대비 하락 시 익절/손절 감시 중]", flush=True)
-                if not my_holdings:
-                    print("  - 보유 종목 없음", flush=True)
+            logger.info(f"  ▶ 나스닥: {nq_price} / VIX: {vix_price} / 환율: {usdkrw}")
+            logger.info(f"  ▶ 반도체: {sox} / 국채금리: {us10y} / 비트코인: {btc}")
+            logger.info("-" * 50)
+
+            # 3. 한국 대장주 확인 (현재 창밖 날씨)
+            logger.info("🇰🇷 [한국 증시 나침반 (대장주)]")
+            for code, name in LEADERS.items():
+                leader_price = api_kis.get_current_price(code)
+                logger.info(f"  🧭 {name}: {leader_price}원" if leader_price else f"  ⚠️ {name} 조회 실패")
+                time.sleep(0.2)
+            logger.info("-" * 50)
+
+            # 4. 내 계좌 및 타겟 종목 확인
+            logger.info("💰 [내 계좌 및 타겟 종목]")
+            asset, profit, holdings = api_kis.get_balance()
+            logger.info(f"  총 자산: {asset:,}원 | 손익: {profit:,}원")
+            
+            for code, name in TARGETS.items():
+                price = api_kis.get_current_price(code)
+                logger.info(f"  🎯 {name}: {price}원" if price else f"  ⚠️ {name} 조회 실패")
+                time.sleep(0.2)
+            logger.info("-" * 50)
+
+            # 5. 봇의 매매 판단 (두뇌)
+            logger.info("🧠 매매 조건 탐색 중...")
+            if vix_price is not None and vix_price >= 20.0:
+                if "114800" not in holdings:
+                    logger.info("🚨 공포장(VIX 20↑) 감지! 인버스 매수 시그널 발생!")
+                    telegram_msg.send_message("🚨 시장 공포 감지: KODEX 인버스 매수 로직 진입")
+                    # api_kis.buy_market_order("114800", 10) # 👈 실제 매수는 주석 처리해둠
                 else:
-                    for item in my_holdings:
-                        name = item.get('name', '알수없음')
-                        qty = item.get('qty', 0)
-                        price = item.get('price', 0)
-                        profit = item.get('profit', 0)
-                        profit_rate = item.get('profit_rate', 0.0)
-                        print(f"  - {name} | {qty}주 | 현재가: {format(price, ',')}원 | 평가손익: {format(profit, ',')}원 ({profit_rate}%)", flush=True)
-            except Exception as e:
-                print(f"⚠️ [잔고/보유종목 조회 오류]: {e}", flush=True)
+                    logger.info("  -> 이미 인버스를 보유 중입니다.")
+            else:
+                logger.info("  -> 뚜렷한 매매 시그널이 없어 관망합니다.")
 
-            # 🟡 타겟 종목 현재가 조회 및 매수 임박 알림
-            print("🎯 [타겟 감시 종목 현재가 🟡 내부 코드 로직 조건 충족 시 매수 대기]", flush=True)
-            for code, name in TARGET_ITEMS.items():
-                try:
-                    time.sleep(1) # API 차단 방지 1초 딜레이
-                    price = api_kis.get_current_price(code) 
-                    
-                    # ==================================================
-                    # 🚀 [추가] 매수 임박 알림 (호가 근접 모니터링)
-                    # ==================================================
-                    # TODO: 아래 target_buy_price에 실제 매매 로직(5일선/20일선 등)에서 계산된 타점 변수를 넣어주세요.
-                    # (현재는 테스트를 위해 '현재가 - 300원'을 목표가로 임시 설정해 두었습니다)
-                    target_buy_price = price - 300 
-                    
-                    gap = price - target_buy_price
-                    
-                    # 목표가까지 500원 이내로 좁혀졌을 때 (차이가 0보다 크고 500 이하)
-                    if 0 < gap <= 500:
-                        last_time = alert_cooldown.get(code, 0)
-                        
-                        # 쿨타임 체크: 마지막 알림 이후 10분(600초) 경과 시에만 발송
-                        if time.time() - last_time > 600:
-                            msg = f"🚨 [매수 타점 임박] {name}\n"
-                            msg += f" - 현재가: {format(price, ',')}원\n"
-                            msg += f" - 목표가: {format(target_buy_price, ',')}원\n"
-                            msg += f" - 타점까지 단 {format(gap, ',')}원 남았습니다!"
-                            
-                            telegram.send_msg(msg)
-                            print(f"  🔔 [{name}] 매수 임박 텔레그램 발송 완료!", flush=True)
-                            
-                            # 알림 발송 시간 갱신
-                            alert_cooldown[code] = time.time()
-                    # ==================================================
+            logger.info("=" * 50)
 
-                    print(f"  - {name}: {format(price, ',')}원", flush=True)
-                except Exception as e:
-                    print(f"  - {name}: 조회 대기 중...", flush=True)
+        except Exception as e:
+            logger.error(f"⚠️ 봇 에러 발생: {e}")
+            telegram_msg.send_message(f"🚨 봇 에러 발생: {e}")
 
-            print("==================================================", flush=True)
-
-            # 📱 텔레그램 정기 브리핑 (1시간마다 & 오전 9시 ~ 오후 3시 30분 장중 제한)
-            is_market_open = (9 <= now.hour < 15) or (now.hour == 15 and now.minute <= 30)
-
-            if (time.time() - last_telegram_time >= TELEGRAM_INTERVAL) and is_market_open:
-                try:
-                    telegram.notify_balance(total_asset, total_profit, my_holdings)
-                    print(f"[{now.strftime('%H:%M:%S')}] ✅ [텔레그램] 정기 1시간 브리핑 전송 완료", flush=True)
-                    last_telegram_time = time.time()
-                except Exception as e:
-                    print(f"⚠️ [텔레그램 정기 브리핑 실패]: {e}", flush=True)
-
-            # 🚀 30초 대기
-            time.sleep(30)
-
-    except KeyboardInterrupt:
-        telegram.send_msg("<b>[🛑 시스템 종료]</b> 수동으로 중단되었습니다.")
-        print("\n🛑 시스템이 수동으로 종료되었습니다.", flush=True)
-    except Exception as e:
-        telegram.send_msg(f"<b>[🚨 시스템 오류]</b>\n{e}")
-        print(f"🚨 시스템 오류: {e}", flush=True)
+        logger.info("⏳ 30초 대기 중...\n")
+        time.sleep(30)
 
 if __name__ == "__main__":
     main()
