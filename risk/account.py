@@ -1,7 +1,7 @@
 import requests
-from auth import get_access_token
-from config import ACNT_PRDT_CD, APP_KEY, APP_SECRET, CANO, IS_PAPER, URL_BASE
-from logger import error
+from core.auth import get_access_token
+from utils.config import ACNT_PRDT_CD, APP_KEY, APP_SECRET, CANO, IS_PAPER, URL_BASE
+from utils.logger import error
 
 def get_balance():
     token = get_access_token()

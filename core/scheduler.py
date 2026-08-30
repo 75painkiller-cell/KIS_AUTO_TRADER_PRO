@@ -1,6 +1,6 @@
 from datetime import datetime, time
 from typing import Tuple
-from config import (
+from utils.config import (
     MARKET_OPEN,
     MARKET_CLOSE,
     BUY_START,

@@ -1,6 +1,6 @@
-from account import get_balance, get_cash
-from config import INVEST_RATIO, MAX_ORDER_AMOUNT
-from logger import error, info, warning
+from risk.account import get_balance, get_cash
+from utils.config import INVEST_RATIO, MAX_ORDER_AMOUNT
+from utils.logger import error, info, warning
 from market import get_current_price
 
 def get_my_stocks():

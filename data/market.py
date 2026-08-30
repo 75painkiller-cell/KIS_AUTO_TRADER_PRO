@@ -1,9 +1,9 @@
 from datetime import datetime, timedelta
 import time
 import requests
-from auth import get_access_token
-from config import APP_KEY, APP_SECRET, FUTURES_CODE, URL_BASE
-from logger import error, warning
+from core.auth import get_access_token
+from utils.config import APP_KEY, APP_SECRET, FUTURES_CODE, URL_BASE
+from utils.logger import error, warning
 
 # 캐시 관련 설정 (필요시 시세 데이터 캐싱용)
 _daily_cache = {}

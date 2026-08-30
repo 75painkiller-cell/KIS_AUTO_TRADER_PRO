@@ -1,5 +1,5 @@
 from datetime import datetime
-from config import STOP_LOSS, TAKE_PROFIT
+from utils.config import STOP_LOSS, TAKE_PROFIT
 import pytz
 
 

@@ -1,7 +1,7 @@
 import sqlite3
 import os
 from datetime import datetime
-from logger import error, info
+from utils.logger import error, info
 
 class StateManager:
     """

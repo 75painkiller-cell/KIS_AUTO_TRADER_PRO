@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 import requests
-from config import APP_KEY, APP_SECRET, URL_BASE
-from logger import error, info
+from utils.config import APP_KEY, APP_SECRET, URL_BASE
+from utils.logger import error, info
 
 _access_token = None
 _token_expired = None

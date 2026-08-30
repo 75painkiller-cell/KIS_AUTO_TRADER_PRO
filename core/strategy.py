@@ -200,7 +200,7 @@ def execute_trading_logic():
           if not is_disparity_ok: reasons.append(f"이격도과열({disparity:.1f}%)")
           buy_status = f"⏳ [매수 대기 중 ({', '.join(reasons)})]"
 
-      print(f"  🔸 {name.strip()} | 현재가: {price:,}원 ({chg_rate:+.2f}%)")
+      logger.info(f"  🔹 {name.strip()} | 현재가: {price:,}원 ({chg_rate:+.2f}%)")
       print(f"    📈 추세: {trend} (5일: {ma5:,.0f}원 / 20일: {ma20:,.0f}원)")
       print(f"    📊 지표: RSI: {rsi:.1f} | 변동성목표가: {target_breakout_price:,.0f}원 | 이격도: {disparity:.1f}%")
       print(f"    🎯 매수 상태: {buy_status}")

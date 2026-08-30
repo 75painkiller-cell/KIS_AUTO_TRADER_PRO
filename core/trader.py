@@ -1,11 +1,11 @@
 import time
 import requests
 from typing import Tuple, Dict, Any, Optional
-from auth import get_access_token
-from config import ACNT_PRDT_CD, APP_KEY, APP_SECRET, CANO, IS_PAPER, URL_BASE, USE_STOP_LOSS, USE_TAKE_PROFIT
-from logger import error, info, warning
+from core.auth import get_access_token
+from utils.config import ACNT_PRDT_CD, APP_KEY, APP_SECRET, CANO, IS_PAPER, URL_BASE, USE_STOP_LOSS, USE_TAKE_PROFIT
+from utils.logger import error, info, warning
 from risk import check_exit
-from state_manager import StateManager  # 파일명이 다르면 db_manager를 해당 파일명으로 수정하세요
+from utils.state_manager import StateManager  # 파일명이 다르면 db_manager를 해당 파일명으로 수정하세요
 
 # 전역(Global)으로 DB 매니저 객체 생성
 db = StateManager()
