@@ -16,11 +16,10 @@ TARGETS = {
     "251340": "KODEX 코스닥150선물인버스"
 }
 
-# 한국 증시 분위기 파악용 대장주 (나침반)
-LEADERS = {
-    "005930": "삼성전자",
-    "247540": "에코프로비엠"
-}
+# 🌐 글로벌 지표 캐싱용 전역 변수 설정
+last_global_check_time = 0
+GLOBAL_UPDATE_INTERVAL = 600  # 600초 (10분) 주기
+cached_vix_price = 0.0        # 매매 로직에 넘겨줄 VIX 임시 저장 공간
 
 def is_market_open():
     """현재가 정규장 시간(평일 09:00 ~ 15:30)인지 확인"""
@@ -31,8 +30,52 @@ def is_market_open():
     market_end = now.replace(hour=15, minute=30, second=0, microsecond=0)
     return market_start <= now <= market_end
 
+def check_global_indicators():
+    """미국/글로벌 지표 조회 및 출력"""
+    logger.info("🌍 [미국/글로벌 지표]")
+    nq_price = global_data.get_nasdaq_futures()
+    vix_price = global_data.get_vix()
+    usdkrw = global_data.get_usdkrw()
+    sox = global_data.get_sox()
+    us10y = global_data.get_us_10y_yield()
+    btc = global_data.get_bitcoin()
+
+    logger.info(f"  ▶ 나스닥: {nq_price} / VIX: {vix_price} / 환율: {usdkrw}")
+    logger.info(f"  ▶ 반도체: {sox} / 국채금리: {us10y} / 비트코인: {btc}")
+    logger.info("-" * 50)
+    return vix_price
+
+def check_account_and_targets():
+    """내 계좌 잔고 및 타겟 종목 현재가 조회"""
+    logger.info("💰 [내 계좌 및 타겟 종목]")
+    asset, profit, holdings = api_kis.get_balance()
+    logger.info(f"  총 자산: {asset:,}원 | 손익: {profit:,}원")
+    
+    for code, name in TARGETS.items():
+        price = api_kis.get_current_price(code)
+        logger.info(f"  🎯 {name}: {price}원" if price else f"  ⚠️ {name} 조회 실패")
+        time.sleep(0.2) # API 통신 제한(Rate Limit) 방어용 딜레이
+    logger.info("-" * 50)
+    return holdings
+
+def evaluate_trading_signals(vix_price, holdings):
+    """매매 판단 로직 실행"""
+    logger.info("🧠 매매 조건 탐색 중...")
+    if vix_price is not None and isinstance(vix_price, (int, float)) and vix_price >= 20.0:
+        if "114800" not in holdings:
+            logger.info("🚨 공포장(VIX 20↑) 감지! 인버스 매수 시그널 발생!")
+            telegram_msg.send_message("🚨 시장 공포 감지: KODEX 인버스 매수 로직 진입")
+            # api_kis.buy_market_order("114800", 10) 
+        else:
+            logger.info("  -> 이미 인버스를 보유 중입니다.")
+    else:
+        logger.info("  -> 뚜렷한 매매 시그널이 없어 관망합니다.")
+    logger.info("=" * 50)
+
 def main():
-    start_msg = "🚀 KIS 자동매매 봇 가동 시작! (모든 지표 탑재 완료)"
+    global last_global_check_time, cached_vix_price
+    
+    start_msg = "🚀 KIS_AUTO_TRADER_PRO 가동 시작! (10분 주기 글로벌 지표 캐싱 적용)"
     logger.info(start_msg)
     telegram_msg.send_message(start_msg) 
 
@@ -47,51 +90,24 @@ def main():
             logger.info("=" * 50)
             logger.info("📊 시스템 상태 점검")
             
-            # 2. 미국 시장 확인 (일기예보)
-            logger.info("🌍 [미국/글로벌 지표]")
-            nq_price = global_data.get_nasdaq_futures()
-            vix_price = global_data.get_vix()
-            usdkrw = global_data.get_usdkrw()
-            sox = global_data.get_sox()
-            us10y = global_data.get_us_10y_yield()
-            btc = global_data.get_bitcoin()
-
-            logger.info(f"  ▶ 나스닥: {nq_price} / VIX: {vix_price} / 환율: {usdkrw}")
-            logger.info(f"  ▶ 반도체: {sox} / 국채금리: {us10y} / 비트코인: {btc}")
-            logger.info("-" * 50)
-
-            # 3. 한국 대장주 확인 (현재 창밖 날씨)
-            logger.info("🇰🇷 [한국 증시 나침반 (대장주)]")
-            for code, name in LEADERS.items():
-                leader_price = api_kis.get_current_price(code)
-                logger.info(f"  🧭 {name}: {leader_price}원" if leader_price else f"  ⚠️ {name} 조회 실패")
-                time.sleep(0.2)
-            logger.info("-" * 50)
-
-            # 4. 내 계좌 및 타겟 종목 확인
-            logger.info("💰 [내 계좌 및 타겟 종목]")
-            asset, profit, holdings = api_kis.get_balance()
-            logger.info(f"  총 자산: {asset:,}원 | 손익: {profit:,}원")
-            
-            for code, name in TARGETS.items():
-                price = api_kis.get_current_price(code)
-                logger.info(f"  🎯 {name}: {price}원" if price else f"  ⚠️ {name} 조회 실패")
-                time.sleep(0.2)
-            logger.info("-" * 50)
-
-            # 5. 봇의 매매 판단 (두뇌)
-            logger.info("🧠 매매 조건 탐색 중...")
-            if vix_price is not None and vix_price >= 20.0:
-                if "114800" not in holdings:
-                    logger.info("🚨 공포장(VIX 20↑) 감지! 인버스 매수 시그널 발생!")
-                    telegram_msg.send_message("🚨 시장 공포 감지: KODEX 인버스 매수 로직 진입")
-                    # api_kis.buy_market_order("114800", 10) # 👈 실제 매수는 주석 처리해둠
-                else:
-                    logger.info("  -> 이미 인버스를 보유 중입니다.")
+            # 2. 글로벌 지표 확인 (10분에 1번만 실행)
+            current_time = time.time()
+            if current_time - last_global_check_time >= GLOBAL_UPDATE_INTERVAL:
+                # 10분이 지났을 때만 API를 호출하여 갱신
+                cached_vix_price = check_global_indicators()
+                last_global_check_time = current_time
             else:
-                logger.info("  -> 뚜렷한 매매 시그널이 없어 관망합니다.")
-
-            logger.info("=" * 50)
+                # 10분이 안 지났으면 남은 시간 표시
+                remain_time = int(GLOBAL_UPDATE_INTERVAL - (current_time - last_global_check_time))
+                logger.info(f"🌍 [미국/글로벌 지표] (다음 갱신까지 {remain_time}초 남음)")
+            
+            time.sleep(0.5) 
+            
+            # 3. 계좌 및 타겟 종목 확인 (매 사이클마다 실행)
+            holdings = check_account_and_targets()
+            
+            # 4. 매매 판단 로직 실행 (캐싱된 VIX 데이터 사용)
+            evaluate_trading_signals(cached_vix_price, holdings)
 
         except Exception as e:
             logger.error(f"⚠️ 봇 에러 발생: {e}")
