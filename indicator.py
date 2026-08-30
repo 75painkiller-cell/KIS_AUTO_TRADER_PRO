@@ -1,39 +1,54 @@
-from collections import deque
-import time
-from typing import Tuple
+import yfinance as yf
+import pandas as pd
+from my_logger import logger
 
-class OpenInterestTracker:
-    """
-    일정 시간(window_seconds) 동안의 미결제약정(Open Interest) 변화량을 추적하는 클래스입니다.
-    기본값은 180초(3분)입니다.
-    """
-    def __init__(self, window_seconds: int = 180):
-        self.window_seconds = window_seconds
-        self.history = deque()
-
-    def update(self, current_oi: int) -> Tuple[int, int]:
-        now = time.time()
+def calculate_indicators(code):
+    try:
+        ticker = f"{code}.KS"
+        df = yf.download(ticker, period="3mo", interval="1d", progress=False)
         
-        # [방어막 추가] API 통신 중 current_oi가 문자열('1500')로 들어와도 에러가 나지 않도록 정수 변환
-        try:
-            current_oi = int(current_oi)
-        except (ValueError, TypeError):
-            # 비정상적인 값이 들어오면 변화량 0으로 처리
-            return 0, 0
+        if df.empty or len(df) < 26:
+            return 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
             
-        self.history.append((now, current_oi))
-
-        # 설정한 시간(window_seconds)이 지난 과거 데이터는 제거 (슬라이딩 윈도우 갱신)
-        while self.history and (now - self.history[0][0] > self.window_seconds):
-            self.history.popleft()
-
-        # 비교할 데이터가 부족한 초기 상태에서는 0 반환
-        if len(self.history) < 2:
-            return 0, 0
-
-        oldest_time, oldest_oi = self.history[0]
+        close = df['Close'].squeeze()
+        open_price = float(df['Open'].squeeze().iloc[-1])   # 당일 시가
+        high_p = float(df['High'].squeeze().iloc[-2])       # 전일 고가
+        low_p = float(df['Low'].squeeze().iloc[-2])         # 전일 저가
         
-        accum_change = current_oi - oldest_oi
-        actual_secs = int(now - oldest_time)
+        vol = int(df['Volume'].squeeze().iloc[-1])
+        prev_close = float(close.iloc[-2])
         
-        return accum_change, actual_secs
+        ma5 = float(close.rolling(window=5).mean().iloc[-1])
+        ma20 = float(close.rolling(window=20).mean().iloc[-1])
+        
+        delta = close.diff()
+        gain = delta.where(delta > 0, 0).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi = float(100 - (100 / (1 + rs)).iloc[-1])
+        
+        std = close.rolling(window=20).std()
+        bb_upper = float((ma20 + (std * 2)).iloc[-1])
+        bb_lower = float((ma20 - (std * 2)).iloc[-1])
+        
+        exp1 = close.ewm(span=12, adjust=False).mean()
+        exp2 = close.ewm(span=26, adjust=False).mean()
+        macd = float((exp1 - exp2).iloc[-1])
+        
+        return ma5, ma20, rsi, vol, prev_close, bb_upper, bb_lower, macd, open_price, high_p, low_p
+        
+    except Exception as e:
+        logger.error(f"지표 계산 오류 ({code}): {e}")
+        return 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+
+def get_nasdaq_trend():
+    try:
+        nasdaq = yf.Ticker("NQ=F")
+        hist = nasdaq.history(period="2d")
+        if len(hist) >= 2:
+            prev_close = hist["Close"].iloc[0]
+            current_price = hist["Close"].iloc[1]
+            return current_price > prev_close
+    except Exception as e:
+        logger.info(f"⚠️ 야후파이낸스 조회 오류: {e}")
+    return False

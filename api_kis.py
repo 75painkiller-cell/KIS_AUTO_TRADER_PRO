@@ -2,6 +2,8 @@ import os
 import requests
 import json
 from dotenv import load_dotenv
+import yfinance as yf
+import pandas as pd
 
 load_dotenv()
 APP_KEY = os.getenv("KIS_APP_KEY")
@@ -10,6 +12,8 @@ ACCOUNT_NUM = os.getenv("KIS_ACCOUNT_NUM")
 
 URL_BASE = "https://openapivts.koreainvestment.com:29443" 
 ACCESS_TOKEN = ""
+
+ETF_FEE_RATE = 0.015  # KIS ETF 매매 수수료율
 
 def get_token():
     global ACCESS_TOKEN
@@ -75,24 +79,21 @@ def get_balance():
     total_asset = int(data['output2'][0]['tot_evlu_amt'])
     total_profit = int(data['output2'][0]['evlu_pfls_smtl_amt'])
     
-    holdings = []
+    # 💡 봇이 인식할 수 있도록 리스트를 딕셔너리 구조로 변경 적용
+    holdings = {}
     for item in data['output1']:
         if int(item['hldg_qty']) > 0:
             buy_price = float(item['pchs_avg_pric'])
             current_price = float(item['prpr'])
             qty = int(item['hldg_qty'])
-            profit_amt = int(item['evlu_pfls_amt']) 
-            tax = int(((current_price - buy_price) * qty) - profit_amt)
             
-            holdings.append({
+            holdings[item['pdno']] = {
                 "name": item['prdt_name'],
-                "buy_price": buy_price,
+                "avg": buy_price,
                 "price": current_price,
                 "qty": qty,
-                "rt": float(item['evlu_pfls_rt']), 
-                "profit_amt": profit_amt,
-                "tax": tax
-            })
+                "net_pl": float(item['evlu_pfls_rt'])
+            }
             
     return total_asset, total_profit, holdings
 
@@ -126,17 +127,12 @@ def get_current_price(code):
     except Exception as e:
         print(f"⚠️ 현재가 조회 통신 에러: {e}")
         return None
+
 def order_cash(code, qty, is_buy=True):
-    """
-    국내 주식 시장가 매수/매도 주문 (모의투자 전용)
-    - is_buy=True: 매수 / is_buy=False: 매도
-    """
     if not ACCESS_TOKEN:
         get_token()
 
     url = f"{URL_BASE}/uapi/domestic-stock/v1/trading/order-cash"
-    
-    # 모의투자(VTS) 현금 주문 TR_ID (매수: VTTC0802U, 매도: VTTC0801U)
     tr_id = "VTTC0802U" if is_buy else "VTTC0801U"
     
     headers = {
@@ -154,9 +150,9 @@ def order_cash(code, qty, is_buy=True):
         "CANO": cano,
         "ACNT_PRDT_CD": acnt_prdt_cd,
         "PDNO": code,
-        "ORD_DVSN": "01", # 01: 시장가
+        "ORD_DVSN": "01", 
         "ORD_QTY": str(qty),
-        "ORD_UNPR": "0"   # 시장가 주문 시 단가는 0
+        "ORD_UNPR": "0"   
     }
     
     try:
@@ -176,10 +172,48 @@ def order_cash(code, qty, is_buy=True):
         print(f"⚠️ 주문 API 통신 에러: {e}")
         return False
 
+# 💡 봇에서 호출하는 공통 주문 함수 매핑 추가
+def send_order(symbol, is_buy, qty, price=0, name=""):
+    return order_cash(symbol, qty, is_buy)
+
+# 💡 누락되었던 3중 모멘텀 지표 계산 로직 전체 추가
+def calculate_indicators(code):
+    try:
+        ticker = f"{code}.KS"
+        df = yf.download(ticker, period="3mo", interval="1d", progress=False)
+        
+        if df.empty or len(df) < 26:
+            return 0, 0, 0, 0, 0, 0, 0, 0
+            
+        close = df['Close'].squeeze()
+        vol = int(df['Volume'].squeeze().iloc[-1])
+        prev_close = float(close.iloc[-2])
+        
+        ma5 = float(close.rolling(window=5).mean().iloc[-1])
+        ma20 = float(close.rolling(window=20).mean().iloc[-1])
+        
+        delta = close.diff()
+        gain = delta.where(delta > 0, 0).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi = float(100 - (100 / (1 + rs)).iloc[-1])
+        
+        std = close.rolling(window=20).std()
+        bb_upper = float((ma20 + (std * 2)).iloc[-1])
+        bb_lower = float((ma20 - (std * 2)).iloc[-1])
+        
+        exp1 = close.ewm(span=12, adjust=False).mean()
+        exp2 = close.ewm(span=26, adjust=False).mean()
+        macd = float((exp1 - exp2).iloc[-1])
+        
+        return ma5, ma20, rsi, vol, prev_close, bb_upper, bb_lower, macd
+        
+    except Exception as e:
+        print(f"지표 계산 오류 ({code}): {e}")
+        return 0, 0, 0, 0, 0, 0, 0, 0
+
 def buy_market_order(code, qty):
-    """시장가 매수"""
     return order_cash(code, qty, is_buy=True)
 
 def sell_market_order(code, qty):
-    """시장가 매도"""
     return order_cash(code, qty, is_buy=False)
