@@ -1,5 +1,5 @@
 import requests
-from my_logger import logger
+from utils.my_logger import logger
 
 # 발급받은 봇 토큰과 본인의 챗 아이디를 넣어주세요.
 TOKEN = "8847215327:AAGgWXRq4E--zwJBkvuh5fUSKbuRsh_dir0"

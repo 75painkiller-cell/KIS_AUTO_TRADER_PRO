@@ -1,8 +1,8 @@
 import datetime
 import time
-import api_kis
+from . import api_kis
 from risk import check_blackout_time
-import telegram
+import utils.telegram as telegram
 from my_logger import logger 
 from indicator import calculate_indicators, get_nasdaq_trend
 
