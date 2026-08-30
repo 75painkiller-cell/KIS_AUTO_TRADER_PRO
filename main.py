@@ -13,6 +13,7 @@ from data import global_data
 from utils.my_logger import logger
 from utils import telegram_msg
 from core import strategy
+from core import scheduler  # 💡 스케줄러 모듈 임포트 추가
 
 # 글로벌 지표 캐싱용 전역 변수 설정
 last_global_check_time = 0
@@ -40,6 +41,12 @@ def main():
 
     while True:
         try:
+            # 💡 장 외 시간 및 공휴일 방어막 (테스트 모드가 아닐 때만 작동)
+            if not scheduler.is_market_open() and not getattr(strategy, 'IS_TEST_MODE', False):
+                logger.info(f"⏳ 현재 장 외 시간 또는 공휴일입니다. ({scheduler.market_status()}) 60초 후 다시 확인합니다.")
+                time.sleep(60)
+                continue
+
             current_time = time.time()
             if current_time - last_global_check_time >= GLOBAL_UPDATE_INTERVAL:
                 check_global_indicators()

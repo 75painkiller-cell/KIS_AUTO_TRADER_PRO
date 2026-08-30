@@ -1,9 +1,12 @@
 import os
 import requests
 import json
+import time
+from functools import wraps
 from dotenv import load_dotenv
 import yfinance as yf
 import pandas as pd
+from my_logger import logger
 
 load_dotenv()
 APP_KEY = os.getenv("KIS_APP_KEY")
@@ -14,6 +17,28 @@ URL_BASE = "https://openapivts.koreainvestment.com:29443"
 ACCESS_TOKEN = ""
 
 ETF_FEE_RATE = 0.015  # KIS ETF 매매 수수료율
+
+def api_retry(max_retries=3, delay=2.0):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(1, max_retries + 1):
+                try:
+                    result = func(*args, **kwargs)
+                    if result is None:
+                        raise ValueError("API 응답 데이터가 비어 있습니다.")
+                    return result
+                except Exception as e:
+                    logger.warning(f"⚠️ [{func.__name__}] API 호출 오류: {e} (재시도 {attempt}/{max_retries})")
+                    if attempt == max_retries:
+                        logger.error(f"❌ [{func.__name__}] 최대 재시도 횟수 초과. 처리 실패.")
+                        if func.__name__ == 'get_balance':
+                            return 0, 0, {}
+                        return None
+                    time.sleep(delay * attempt)
+            return None
+        return wrapper
+    return decorator
 
 def get_token():
     global ACCESS_TOKEN
@@ -34,6 +59,7 @@ def get_token():
     else:
         raise Exception(f"토큰 발급 실패: {res.text}")
 
+@api_retry(max_retries=3, delay=2.0)
 def get_balance():
     if not ACCESS_TOKEN:
         get_token()
@@ -79,7 +105,6 @@ def get_balance():
     total_asset = int(data['output2'][0]['tot_evlu_amt'])
     total_profit = int(data['output2'][0]['evlu_pfls_smtl_amt'])
     
-    # 💡 봇이 인식할 수 있도록 리스트를 딕셔너리 구조로 변경 적용
     holdings = {}
     for item in data['output1']:
         if int(item['hldg_qty']) > 0:
@@ -97,6 +122,7 @@ def get_balance():
             
     return total_asset, total_profit, holdings
 
+@api_retry(max_retries=3, delay=2.0)
 def get_current_price(code):
     if not ACCESS_TOKEN:
         get_token()
@@ -122,12 +148,13 @@ def get_current_price(code):
         if data.get('rt_cd') == '0':
             return int(data['output']['stck_prpr'])
         else:
-            print(f"⚠️ 현재가 조회 API 거부: {data.get('msg1', '알 수 없는 오류')}")
+            logger.warning(f"⚠️ 현재가 조회 API 거부: {data.get('msg1', '알 수 없는 오류')}")
             return None
     except Exception as e:
-        print(f"⚠️ 현재가 조회 통신 에러: {e}")
+        logger.warning(f"⚠️ 현재가 조회 통신 에러: {e}")
         return None
 
+@api_retry(max_retries=3, delay=2.0)
 def order_cash(code, qty, is_buy=True):
     if not ACCESS_TOKEN:
         get_token()
@@ -163,20 +190,18 @@ def order_cash(code, qty, is_buy=True):
         order_side = "매수" if is_buy else "매도"
         
         if data.get('rt_cd') == '0':
-            print(f"✅ [주문 성공] {code} {qty}주 시장가 {order_side} 접수 완료")
+            logger.info(f"✅ [주문 성공] {code} {qty}주 시장가 {order_side} 접수 완료")
             return True
         else:
-            print(f"❌ [주문 실패] {code} {order_side}: {data.get('msg1', '에러 사유 알 수 없음')}")
+            logger.warning(f"❌ [주문 실패] {code} {order_side}: {data.get('msg1', '에러 사유 알 수 없음')}")
             return False
     except Exception as e:
-        print(f"⚠️ 주문 API 통신 에러: {e}")
+        logger.warning(f"⚠️ 주문 API 통신 에러: {e}")
         return False
 
-# 💡 봇에서 호출하는 공통 주문 함수 매핑 추가
 def send_order(symbol, is_buy, qty, price=0, name=""):
     return order_cash(symbol, qty, is_buy)
 
-# 💡 누락되었던 3중 모멘텀 지표 계산 로직 전체 추가
 def calculate_indicators(code):
     try:
         ticker = f"{code}.KS"
@@ -209,7 +234,7 @@ def calculate_indicators(code):
         return ma5, ma20, rsi, vol, prev_close, bb_upper, bb_lower, macd
         
     except Exception as e:
-        print(f"지표 계산 오류 ({code}): {e}")
+        logger.warning(f"지표 계산 오류 ({code}): {e}")
         return 0, 0, 0, 0, 0, 0, 0, 0
 
 def buy_market_order(code, qty):

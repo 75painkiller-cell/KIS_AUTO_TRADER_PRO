@@ -2,12 +2,13 @@ import datetime
 import time
 from . import api_kis
 from risk import check_blackout_time
+from db_manager import log_trade
 import utils.telegram as telegram
 from my_logger import logger 
 from indicator import calculate_indicators, get_nasdaq_trend
 
 TARGET_SYMBOLS = {
-    "069500": "KODEX 200             ",
+    "069500": "KODEX 200                     ",
     "114800": "KODEX 인버스         ",
     "229200": "KODEX 코스닥150      ",
     "251340": "KODEX 코스닥150선물인버스",
@@ -120,14 +121,15 @@ def execute_trading_logic():
           raw_won, fee_won = ev_amt - inv_amt, ev_amt * (api_kis.ETF_FEE_RATE / 100)
           net_won = raw_won - fee_won
           telegram.send_sell_alert(my["name"].strip(), my["qty"], cur_p, my["net_pl"], raw_won, fee_won, net_won, "오버나이트 회피 익절")
+          log_trade(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), symbol, my["name"].strip(), "SELL", cur_p, my["qty"], net_won, "오버나이트 회피 익절")
         time.sleep(1.0)
 
   for symbol, name in TARGET_SYMBOLS.items():
     price = api_kis.get_current_price(symbol)
-    time.sleep(1.0)
+    time.sleep(1.5)
     
     ma5, ma20, rsi, vol, prev_close, bb_upper, bb_lower, macd, open_p, high_p, low_p = calculate_indicators(symbol)
-    time.sleep(1.5)
+    time.sleep(2.0)
 
     if price is None or price == 0 or ma5 == 0:
       logger.info(f"⚠️ [{name.strip()}] 데이터 조회 대기 중...")
@@ -170,6 +172,7 @@ def execute_trading_logic():
         if is_success:
           if symbol in _highest_prices: del _highest_prices[symbol]
           telegram.send_sell_alert(name.strip(), my["qty"], price, net_rate, raw_profit_won, estimated_fee, net_profit_won, sell_reason)
+          log_trade(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), symbol, name.strip(), "SELL", price, my["qty"], net_profit_won, sell_reason)
     else:
       if symbol in _highest_prices: del _highest_prices[symbol]
       
@@ -216,6 +219,7 @@ def execute_trading_logic():
         
         if is_success: 
           telegram.send_buy_alert(name.strip(), calc_qty, price, f"복합 전략 진입 (변동성돌파 및 이격도 {disparity:.1f}%)")
+          log_trade(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), symbol, name.strip(), "BUY", price, calc_qty, 0.0, f"복합 전략 진입 (이격도 {disparity:.1f}%)")
           
         cash -= calc_qty * price
 
