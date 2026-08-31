@@ -50,7 +50,7 @@ def get_token():
         "appsecret": APP_SECRET
     }
     try:
-        res = requests.post(url, headers=headers, data=json.dumps(body), timeout=5)
+        res = requests.post(url, headers=headers, data=json.dumps(body), timeout=20)
     except Exception as e:
         raise Exception(f"토큰 발급 통신 에러: {e}")
         
@@ -91,7 +91,7 @@ def get_balance():
     }
     
     try:
-        res = requests.get(url, headers=headers, params=params, timeout=5)
+        res = requests.get(url, headers=headers, params=params, timeout=20)
     except Exception as e:
         raise Exception(f"잔고 조회 통신 에러: {e}")
         
@@ -141,7 +141,7 @@ def get_current_price(code):
     }
     
     try:
-        res = requests.get(url, headers=headers, params=params, timeout=5)
+        res = requests.get(url, headers=headers, params=params, timeout=20)
         res.raise_for_status()
         data = res.json()
         
@@ -183,7 +183,7 @@ def order_cash(code, qty, is_buy=True):
     }
     
     try:
-        res = requests.post(url, headers=headers, data=json.dumps(body), timeout=5)
+        res = requests.post(url, headers=headers, data=json.dumps(body), timeout=20)
         res.raise_for_status()
         data = res.json()
         
