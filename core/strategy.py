@@ -8,9 +8,9 @@ from my_logger import logger
 from indicator import calculate_indicators, get_nasdaq_trend
 
 TARGET_SYMBOLS = {
-    "069500": "KODEX 200                     ",
-    "114800": "KODEX 인버스         ",
-    "229200": "KODEX 코스닥150      ",
+    "069500": "KODEX 200",
+    "114800": "KODEX 인버스",
+    "229200": "KODEX 코스닥150",
     "251340": "KODEX 코스닥150선물인버스",
 }
 
@@ -23,8 +23,12 @@ K_RATIO = 0.5             # 변동성 돌파 계수
 IS_TEST_MODE = False  
 # ==========================================
 
+# 전역 변수 최상단 초기화 (에러 방지)
 _last_nasdaq_notify_day = None
 _highest_prices = {}
+_last_ready_day = None
+_last_open_day = None
+_last_close_day = None
 
 TRAIL_ACTIVATION_RATE = 3.0
 TRAIL_DROP_RATE = 1.5
@@ -48,10 +52,6 @@ def execute_trading_logic(*args, **kwargs):
 
     now = datetime.datetime.now()
     today_str = now.strftime("%Y-%m-%d")
-
-    if '_last_ready_day' not in globals(): _last_ready_day = None
-    if '_last_open_day' not in globals(): _last_open_day = None
-    if '_last_close_day' not in globals(): _last_close_day = None
 
     if now.weekday() < 5 and now.hour == 8 and 30 <= now.minute < 50 and _last_ready_day != today_str:
         cash, profit, holdings = api_kis.get_balance()
@@ -117,7 +117,7 @@ def execute_trading_logic(*args, **kwargs):
                 if is_success:
                     if symbol in _highest_prices: del _highest_prices[symbol]
                     cur_p = api_kis.get_current_price(symbol)
-                    if cur_p == None or cur_p == 0: cur_p = my["avg"]
+                    if cur_p is None or cur_p == 0: cur_p = my["avg"]
                     inv_amt, ev_amt = my["qty"] * my["avg"], my["qty"] * cur_p
                     raw_won, fee_won = ev_amt - inv_amt, ev_amt * (api_kis.ETF_FEE_RATE / 100)
                     net_won = raw_won - fee_won
