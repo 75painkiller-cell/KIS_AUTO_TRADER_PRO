@@ -1,3 +1,4 @@
+from utils.database import log_trade
 import datetime
 import time
 from . import api_kis

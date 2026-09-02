@@ -1,47 +1,52 @@
-from datetime import datetime, timedelta
+import os
 import requests
-from utils.config import APP_KEY, APP_SECRET, URL_BASE
-from utils.logger import error, info
+import json
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+from utils.my_logger import logger
 
-_access_token = None
-_token_expired = None
+load_dotenv()
+APP_KEY = os.getenv("KIS_APP_KEY")
+APP_SECRET = os.getenv("KIS_APP_SECRET")
+BASE_URL = "https://openapi.koreainvestment.com:9443"
 
-def get_access_token():
-    global _access_token, _token_expired
-    now = datetime.now()
+class KISTokenManager:
+    _instance = None
+    access_token = None
+    token_expired_at = None
 
-    # 기존 토큰이 존재하고 만료 시간이 지나지 않았다면 재발급 없이 기존 토큰 반환 (캐싱)
-    if _access_token and _token_expired and now < _token_expired:
-        return _access_token
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(KISTokenManager, cls).__new__(cls)
+            cls._instance.access_token = None
+            cls._instance.token_expired_at = None
+        return cls._instance
 
-    url = f"{URL_BASE.rstrip('/')}/oauth2/tokenP"
-    headers = {"content-type": "application/json"}
-    body = {
-        "grant_type": "client_credentials",
-        "appkey": APP_KEY,
-        "appsecret": APP_SECRET,
-    }
+    def get_access_token(self):
+        """유효한 토큰이 있으면 재사용하여 403(EGW00133) 제한 에러를 방지합니다."""
+        now = datetime.now()
+        if self.access_token and self.token_expired_at and now < self.token_expired_at:
+            return self.access_token
 
-    try:
-        res = requests.post(url, headers=headers, json=body, timeout=10)
-        
-        # [수정된 부분] 상태 코드가 200일 때만 JSON으로 변환 (에러 페이지 파싱 방지)
-        if res.status_code == 200:
-            data = res.json()
-            if "access_token" in data:
-                _access_token = data["access_token"]
-                # 한국투자증권 토큰은 보통 24시간 유효하나, 안전하게 6시간 주기로 갱신
-                _token_expired = now + timedelta(hours=6)
-                info("[인증] OAuth2 토큰 발급 성공")
-                return _access_token
+        url = f"{BASE_URL}/oauth2/tokenP"
+        headers = {"content-type": "application/json"}
+        body = {
+            "grant_type": "client_credentials",
+            "appkey": APP_KEY,
+            "appsecret": APP_SECRET
+        }
+
+        try:
+            res = requests.post(url, headers=headers, data=json.dumps(body))
+            if res.status_code == 200:
+                data = res.json()
+                self.access_token = data.get("access_token")
+                self.token_expired_at = now + timedelta(hours=23)
+                logger.info("🔑 [토큰 발급 성공] 접근 토큰 캐싱 완료")
+                return self.access_token
             else:
-                error(f"[인증] 토큰 발급 응답에 access_token이 없습니다: {data}")
+                logger.error(f"❌ [토큰 발급 실패] {res.text}")
                 return None
-        else:
-            # 200이 아닐 경우 상태 코드와 상세 메시지 로깅
-            error(f"[인증] 토큰 발급 실패 (상태코드: {res.status_code}) - {res.text}")
+        except Exception as e:
+            logger.error(f"⚠️ [토큰 발급 예외] {e}")
             return None
-            
-    except Exception as e:
-        error(f"[인증] 토큰 발급 예외 발생: {e}")
-        return None
