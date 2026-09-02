@@ -183,8 +183,8 @@ def execute_trading_logic(*args, **kwargs):
             target_breakout_price = open_p + (high_p - low_p) * K_RATIO
             is_breakout_ok = price >= target_breakout_price
 
-            is_ma_ok = (ma5 > ma20) or (rsi < 40)
-            is_rsi_ok = 30 < rsi < 70
+            is_ma_ok = True
+            is_rsi_ok = 0 <= rsi <= 100
             is_macd_ok = True
             is_bb_ok = price < bb_upper
 
