@@ -184,14 +184,14 @@ def execute_trading_logic(*args, **kwargs):
             target_breakout_price = open_p + (high_p - low_p) * K_RATIO
             is_breakout_ok = price >= target_breakout_price
 
-            is_ma_ok = ma5 > ma20
-            is_rsi_ok = 30 < rsi < 70
-            is_macd_ok = macd > 0
+            is_ma_ok = True
+            is_rsi_ok = 0 <= rsi <= 100
+            is_macd_ok = True
             is_bb_ok = price < bb_upper
 
             # 이동평균선 이격도 필터
             disparity = (price / ma20) * 100 if ma20 > 0 else 0
-            is_disparity_ok = 100 <= disparity <= 105
+            is_disparity_ok = 95 <= disparity <= 105
 
             if is_ma_ok and is_rsi_ok and is_macd_ok and is_bb_ok and is_breakout_ok and is_disparity_ok:
                 buy_status = f"🟢 [매수 조건 ALL 충족! (이격도: {disparity:.1f}%)]"
