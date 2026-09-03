@@ -8,7 +8,7 @@ from utils.my_logger import logger
 load_dotenv()
 APP_KEY = os.getenv("KIS_APP_KEY")
 APP_SECRET = os.getenv("KIS_APP_SECRET")
-BASE_URL = "https://openapi.koreainvestment.com:9443"
+BASE_URL = "https://openapivts.koreainvestment.com:29443" # 모의투자 기준 URL
 
 class KISTokenManager:
     _instance = None
@@ -23,7 +23,7 @@ class KISTokenManager:
         return cls._instance
 
     def get_access_token(self):
-        """유효한 토큰이 있으면 재사용하여 403(EGW00133) 제한 에러를 방지합니다."""
+        """유효한 토큰이 있으면 재사용하여 403 제한 에러를 방지합니다."""
         now = datetime.now()
         if self.access_token and self.token_expired_at and now < self.token_expired_at:
             return self.access_token
