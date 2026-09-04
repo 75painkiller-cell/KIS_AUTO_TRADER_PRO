@@ -1,128 +1,93 @@
-import sys
-import os
-import time
-from datetime import datetime
-import threading
+import yaml
 import asyncio
+import datetime
+import requests
+import api_client
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-for folder in ['core', 'data', 'risk', 'utils']:
-    folder_path = os.path.join(current_dir, folder)
-    if folder_path not in sys.path:
-        sys.path.append(folder_path)
+# 본인의 한투 HTS 접속 아이디 입력
+HTS_USER_ID = "본인HTS아이디" 
 
-from data import global_data
-from utils.my_logger import logger
-from utils import telegram_msg
-from utils import discord
-from utils.database import init_db
-from core import strategy
-from core import scheduler
-from auth import KISTokenManager  
-from core.ws_engine import KISWebsocketEngine  
-from core import scanner  
+def load_config(filepath="config.yaml"):
+    """YAML 전략 설정 파일 로드"""
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        print(f"오류: {filepath} 파일을 찾을 수 없습니다.")
+        return None
 
-last_global_check_time = 0
-GLOBAL_UPDATE_INTERVAL = 600
+async def fetch_condition_stocks(access_token, seq_number, name):
+    """실제 KIS HTS 조건검색식 결과 조회 API (t8427 역할)"""
+    url = f"{api_client.URL_BASE}/uapi/domestic-stock/v1/quotations/psearch-result"
+    headers = {
+        "content-type": "application/json; charset=utf-8",
+        "authorization": f"Bearer {access_token}",
+        "appkey": api_client.APP_KEY,
+        "appsecret": api_client.APP_SECRET,
+        "tr_id": "HHKST03900400",
+        "custtype": "P"
+    }
+    params = {
+        "user_id": HTS_USER_ID,
+        "seq": seq_number
+    }
 
-def check_global_indicators():
-    logger.info("🌍 [미국/글로벌 지표]")
-    nq_price = global_data.get_nasdaq_futures()
-    vix_price = global_data.get_vix()
-    usdkrw = global_data.get_usdkrw()
-    sox = global_data.get_sox()
-    us10y = global_data.get_us_10y_yield()
-    btc = global_data.get_bitcoin()
+    # requests의 동기적 딜레이로 인한 병목을 막기 위해 비동기 백그라운드 실행
+    loop = asyncio.get_event_loop()
+    res = await loop.run_in_executor(None, lambda: requests.get(url, headers=headers, params=params))
 
-    logger.info(f" ▶ 나스닥: {nq_price} / VIX: {vix_price} / 환율: {usdkrw}")
+    if res.status_code == 200:
+        data = res.json()
+        # 검색된 종목코드(code)만 추출
+        return [item['code'] for item in data.get('output2', [])]
+    else:
+        print(f"[{name}] 조건검색 호출 실패: {res.text}")
+        return []
+
+async def monitor_strategy(strategy, access_token):
+    """개별 전략의 종목 감시 루프"""
+    name = strategy['name']
+    cond_id = strategy['condition_id']
+    interval = strategy['poll_interval_sec']
     
-    discord.send_embed_message(
-        title="🌍 장전 글로벌 주요 지표",
-        description="현재 해외 증시 및 경제 지표 현황입니다.",
-        color=3066993,
-        fields=[
-            {"name": "나스닥 선물", "value": str(nq_price), "inline": True},
-            {"name": "VIX 공포지수", "value": str(vix_price), "inline": True},
-            {"name": "원달러 환율", "value": str(usdkrw), "inline": True},
-            {"name": "반도체(SOX)", "value": str(sox), "inline": True},
-            {"name": "국채금리(10Y)", "value": str(us10y), "inline": True},
-            {"name": "비트코인", "value": str(btc), "inline": True}
-        ]
-    )
-    logger.info("-" * 50)
-
-def run_websocket_engine():
-    engine = KISWebsocketEngine()
-    target_symbols = []
-
-    while not target_symbols:
-        logger.info("🔍 실시간 감시할 거래량 상위 종목을 탐색합니다...")
-        target_symbols = scanner.get_hot_symbols(15)
-        
-        if not target_symbols:
-            logger.info("⏳ 아직 장 열리기 전이거나 탐색된 종목이 없습니다. 1분 후 다시 시도합니다.")
-            time.sleep(60)
-
-    logger.info(f"🕸️ [투트랙 가동] 핫한 급등주 {len(target_symbols)}개 실시간 감시(웹소켓) 시작!")
-    asyncio.run(engine.connect_and_listen(target_symbols))
-
-def main():
-    global last_global_check_time
+    print(f"▶ [{name}] 감시 시작 (조건식 번호: {cond_id} / 갱신주기: {interval}초)")
     
-    init_db()
-
-    start_msg = "🚀 KIS 자동 매매 봇이 투트랙 시스템으로 시작되었습니다."
-    logger.info(start_msg)
-    telegram_msg.send_message(start_msg)
-    
-    discord.send_embed_message(
-        title="🚀 KIS 자동 매매 봇 가동",
-        description="투트랙(스윙 + 고래 탐지) 시스템이 정상적으로 시작되었습니다.",
-        color=3447003,
-        fields=[
-            {"name": "상태", "value": "장 개장 대기 중", "inline": True},
-            {"name": "감시 방식", "value": "자동 스캐너 연동", "inline": True}
-        ]
-    )
-
-    token_manager = KISTokenManager()
-    initial_token = token_manager.get_access_token()
-    if not initial_token:
-        err_msg = "❌ 초기 KIS API 접근 토큰 발급 실패! 앱키와 시크릿 설정을 확인해주세요."
-        logger.error(err_msg)
-        telegram_msg.send_message(err_msg)
-        return  
-
-    logger.info("✅ KIS API 인증 토큰 정상 발급 완료. 20초 추세 메인 루프를 시작합니다.")
-
     while True:
-        try:
-            now = datetime.now()
+        now = datetime.datetime.now().strftime("%H:%M:%S")
+        
+        # 1. KIS API로 실시간 조건검색 종목 리스트 확보
+        target_stocks = await fetch_condition_stocks(access_token, cond_id, name)
+        print(f"[{now}] [{name}] 포착 종목: {target_stocks}")
+        
+        # 2. 향후 여기에 웹소켓 실시간 현재가와 target_stocks를 비교하는 로직 추가
+        
+        # 3. KIS API 호출 제한(Rate Limit) 방지를 위한 대기
+        await asyncio.sleep(interval)
 
-            current_timestamp = time.time()
-            if current_timestamp - last_global_check_time >= GLOBAL_UPDATE_INTERVAL:
-                check_global_indicators()
-                last_global_check_time = current_timestamp
-
-            if not scheduler.is_market_open(now) and not getattr(strategy, 'IS_TEST_MODE', False):
-                logger.info("⏳ 현재 장 외 시간 또는 공휴일입니다. 20초 후 다시 확인합니다.")
-                time.sleep(20)
-                continue
-
-            if now.strftime("%H%M%S") >= "150000" and not getattr(strategy, 'IS_TEST_MODE', False):
-                logger.info("🛑 15시 이후이므로 신규 매매를 진행하지 않습니다.")
-                time.sleep(20)
-                continue
-
-            strategy.execute_trading_logic(now)
-
-        except Exception as e:
-            logger.error(f"⚠️ 봇 에러 발생: {e}")
-            telegram_msg.send_message(f"⚠️ 봇 에러 발생: {e}")
-
-        time.sleep(20) 
+async def main():
+    print("=== KIS_AUTO_TRADER_PRO 통합 시스템 시작 ===")
+    
+    # 1. 환경 설정 로드
+    bot_config = load_config("config.yaml")
+    if not bot_config: return
+    
+    # 2. 한투 API 통신용 토큰 및 키 발급
+    print("API 인증 토큰을 발급받습니다...")
+    rest_token = api_client.get_access_token()
+    ws_key = api_client.get_ws_approval_key()
+    
+    print(f"총 {len(bot_config['strategies'])}개의 전략 엔진을 가동합니다.\n" + "="*50)
+    
+    # 3. YAML에 등록된 개수만큼 비동기 감시 태스크 생성
+    tasks = []
+    for strat in bot_config['strategies']:
+        tasks.append(monitor_strategy(strat, rest_token))
+        
+    # 4. 모든 전략 동시 실행 (병렬 처리)
+    await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
-    ws_thread = threading.Thread(target=run_websocket_engine, daemon=True)
-    ws_thread.start()
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n시스템을 안전하게 종료합니다.")

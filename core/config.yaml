@@ -1,0 +1,21 @@
+strategies:
+  - name: 눌림목_돌파
+    condition_id: 0
+    poll_interval_sec: 5
+    max_candidates: 5
+    buy_rules:
+      dip_rate_pct: -3.5
+      volume_surge_pct: 150
+    sell_rules:
+      take_profit_pct: 3.0
+      stop_loss_pct: -1.5
+
+  - name: 급등주_돌파
+    condition_id: 1
+    poll_interval_sec: 2
+    max_candidates: 3
+    buy_rules:
+      breakout_threshold_pct: 5.0
+    sell_rules:
+      take_profit_pct: 5.0
+      stop_loss_pct: -2.0
