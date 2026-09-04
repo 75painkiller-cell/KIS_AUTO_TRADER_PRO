@@ -45,6 +45,29 @@ class KISWebsocketEngine:
             logger.error(f"⚠️ [웹소켓] 승인키 발급 중 예외 발생: {e}")
             return None
 
+    # [수정 1] 동기화(Sync)로 인한 블로킹 방지를 위해 알림/DB 처리를 별도 비동기 함수로 분리
+    async def process_whale_alert(self, symbol, price, volume):
+        alert_msg = f"🚨 [고래 체결 포착!] 종목: {symbol} | 수량: {volume:,}주 | 가격: {price:,}원"
+        logger.info(alert_msg)
+        
+        # asyncio.to_thread를 사용하여 I/O 병목을 유발하는 동기 함수들을 백그라운드 스레드로 넘김
+        await asyncio.gather(
+            asyncio.to_thread(log_whale, symbol, price, volume),
+            asyncio.to_thread(telegram_msg.send_message, alert_msg),
+            asyncio.to_thread(
+                discord.send_embed_message,
+                title="🚨 [고래 체결 포착!]",
+                description="실시간 웹소켓 감시망에서 대량 거래량이 유입되었습니다.",
+                color=15158332,
+                fields=[
+                    {"name": "종목 코드", "value": str(symbol), "inline": True},
+                    {"name": "체결 수량", "value": f"{volume:,}주", "inline": True},
+                    {"name": "체결 가격", "value": f"{price:,}원", "inline": True},
+                    {"name": "대응 가이드", "value": "돌파 매수세 집중 모니터링", "inline": False}
+                ]
+            )
+        )
+
     async def connect_and_listen(self, symbols):
         if not self.approval_key:
             self.get_approval_key()
@@ -72,7 +95,7 @@ class KISWebsocketEngine:
                     }
                 }
                 await websocket.send(json.dumps(request_data))
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.1) # 한국투자증권 구독 초당 요청 제한 방어용 유지
 
             while True:
                 try:
@@ -85,22 +108,8 @@ class KISWebsocketEngine:
                             volume = parsed_data['volume']
                             
                             if volume >= 2000:
-                                alert_msg = f"🚨 [고래 체결 포착!] 종목: {symbol} | 수량: {volume:,}주 | 가격: {price:,}원"
-                                logger.info(alert_msg)
-                                
-                                log_whale(symbol, price, volume)
-                                telegram_msg.send_message(alert_msg)
-                                discord.send_embed_message(
-                                    title="🚨 [고래 체결 포착!]",
-                                    description="실시간 웹소켓 감시망에서 대량 거래량이 유입되었습니다.",
-                                    color=15158332,
-                                    fields=[
-                                        {"name": "종목 코드", "value": str(symbol), "inline": True},
-                                        {"name": "체결 수량", "value": f"{volume:,}주", "inline": True},
-                                        {"name": "체결 가격", "value": f"{price:,}원", "inline": True},
-                                        {"name": "대응 가이드", "value": "돌파 매수세 집중 모니터링", "inline": False}
-                                    ]
-                                )
+                                # [수정 2] 웹소켓 수신 루프가 멈추지 않도록 백그라운드 Task로 분리 실행 (Fire and Forget)
+                                asyncio.create_task(self.process_whale_alert(symbol, price, volume))
 
                 except websockets.exceptions.ConnectionClosed:
                     logger.warning("⚠️ [웹소켓] 연결이 끊겼습니다. 재연결을 시도합니다...")

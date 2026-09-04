@@ -1,4 +1,4 @@
-from risk.account import get_balance, get_cash
+from .account import get_balance, get_cash
 from utils.config import INVEST_RATIO, MAX_ORDER_AMOUNT
 from utils.logger import error, info, warning
 from market import get_current_price
