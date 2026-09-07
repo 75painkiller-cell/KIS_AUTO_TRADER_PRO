@@ -11,20 +11,23 @@ from utils.discord import send_discord_message
 
 async def fetch_condition_stocks(access_token, seq_number, name):
     """실제 KIS HTS 조건검색식 결과 조회 API"""
-    url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/psearch-result"
+    import os, requests
+    url = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/psearch-result"
+    app_key = (os.getenv("KIS_APP_KEY") or "").strip()
+    app_secret = (os.getenv("KIS_APP_SECRET") or "").strip()
+    user_id = (os.getenv("HTS_USER_ID") or "@3084126").strip()
     headers = {
         "content-type": "application/json; charset=utf-8",
         "authorization": f"Bearer {str(access_token).strip()}",
-        "appkey": str(APP_KEY).strip(),
-        "appsecret": str(APP_SECRET).strip(),
+        "appkey": app_key,
+        "appsecret": app_secret,
         "tr_id": "HHKST03900400",
         "custtype": "P"
     }
     params = {
-        "user_id": str(HTS_USER_ID).strip(),
+        "user_id": user_id,
         "seq": str(seq_number).strip()
     }
-
     try:
         res = await asyncio.to_thread(requests.get, url, headers=headers, params=params, timeout=5)
         if res.status_code == 200:
@@ -57,7 +60,7 @@ def get_3min_trend_data(stock_code, access_token):
     }
     
     try:
-        res = requests.get(url, headers=headers, params=params, timeout=3)
+        res = requests.get(url, headers=headers, params=params, timeout=7)
         if res.status_code != 200:
             return None
         data = res.json().get('output2', [])
@@ -83,13 +86,14 @@ def get_3min_trend_data(stock_code, access_token):
         logger.error(f"분봉 데이터 분석 오류 ({stock_code}): {e}")
         return None
 
-async def monitor_strategy_and_trade(strategy, access_token):
-    """YAML 전략 조건식 조회 및 데이트레이딩 루프 통합 관리"""
+async def monitor_strategy_and_trade(strategy, access_token, dry_run=True):
+    """YAML 전략 조건식 조회 및 데이트레이딩 루프 통합 관리 (Dry-Run 지원)"""
     name = strategy.get('name', '전략')
     cond_id = strategy.get('condition_id', '1')
     interval = strategy.get('poll_interval_sec', 10)
     
-    logger.info(f"▶ [{name}] 감시 시작 (조건식 번호: {cond_id} / 갱신주기: {interval}초)")
+    mode_text = "[🧪 Dry-Run 가상매매]" if dry_run else "[⚡ 실전 주문]"
+    logger.info(f"▶ {mode_text} [{name}] 감시 시작 (조건식 번호: {cond_id} / 갱신주기: {interval}초)")
     holding_stocks = []
     
     while True:
@@ -108,7 +112,13 @@ async def monitor_strategy_and_trade(strategy, access_token):
                 msg = f"📉 [매도 신호] {stock_code} | 현재가: {current['close']} (데드크로스)"
                 logger.info(msg)
                 await asyncio.to_thread(send_discord_message, msg)
-                await asyncio.to_thread(execute_order, stock_code, access_token, "sell", "1")
+                
+                # 주문 분기: Dry-Run이면 가상 체결 로그만, False면 실제 증권사 주문
+                if dry_run:
+                    logger.info(f"🧪 [가상 매도 완료] {stock_code} 1주 가상 청산 처리")
+                else:
+                    await asyncio.to_thread(execute_order, stock_code, access_token, "sell", "1")
+                    
                 holding_stocks.remove(stock_code)
 
         # 신규 종목 매수 감시
@@ -128,7 +138,13 @@ async def monitor_strategy_and_trade(strategy, access_token):
                 msg = f"🚀 [매수 조건 포착] {stock_code} | 현재가: {close_price} | VWAP: {vwap:.2f}"
                 logger.info(msg)
                 await asyncio.to_thread(send_discord_message, msg)
-                await asyncio.to_thread(execute_order, stock_code, access_token, "buy", "1")
+                
+                # 주문 분기: Dry-Run이면 가상 체결 로그만, False면 실제 증권사 주문
+                if dry_run:
+                    logger.info(f"🧪 [가상 매수 완료] {stock_code} 1주 가상 진입 처리 (실제 자금 사용 안 함)")
+                else:
+                    await asyncio.to_thread(execute_order, stock_code, access_token, "buy", "1")
+                    
                 holding_stocks.append(stock_code)
                 
         await asyncio.sleep(interval)
@@ -144,8 +160,13 @@ async def run_trading_system(bot_config):
         logger.error("❌ config.yaml에 'strategies' 설정이 없거나 비어 있습니다.")
         return
 
-    logger.info(f"총 {len(strategies)}개의 전략 엔진을 가동합니다.")
-    await asyncio.to_thread(send_discord_message, "🟢 KIS 모의투자: 통합 자동 매매 시스템 가동 시작")
+    # config.yaml의 DRY_RUN 설정값 읽기 (기본값: True로 안전 설정)
+    dry_run = bot_config.get('DRY_RUN', True)
+    mode_text = "🧪 [가상 매매(Dry-Run) 모드]" if dry_run else "⚡ [실전 매매 모드]"
+
+    logger.info(f"총 {len(strategies)}개의 전략 엔진을 가동합니다. {mode_text}")
+    await asyncio.to_thread(send_discord_message, f"🟢 KIS 자동 매매 시스템 가동 시작 {mode_text}")
     
-    tasks = [monitor_strategy_and_trade(strat, access_token) for strat in strategies]
+    # 전략 엔진 실행 시 dry_run 플래그 전달
+    tasks = [monitor_strategy_and_trade(strat, access_token, dry_run=dry_run) for strat in strategies]
     await asyncio.gather(*tasks)
