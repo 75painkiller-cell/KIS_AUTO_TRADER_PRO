@@ -88,7 +88,7 @@ def get_3min_trend_data(stock_code, access_token):
         return None
 
 async def monitor_strategy_and_trade(strategy, access_token, dry_run=True):
-    """YAML 전략 조건식 조회 및 데이트레이딩 루프 (시장 + 시간 + 트레일링스탑 + 가격/유동성 필터 적용)"""
+    """YAML 전략 조건식 조회 및 데이트레이딩 루프 (시장 지표 캐싱 적용으로 멈춤 현상 방지)"""
     name = strategy.get('name', '전략')
     cond_id = strategy.get('condition_id', '1')
     interval = strategy.get('poll_interval_sec', 10)
@@ -97,6 +97,10 @@ async def monitor_strategy_and_trade(strategy, access_token, dry_run=True):
     logger.info(f"▶ {mode_text} [{name}] 감시 시작 (조건식 번호: {cond_id} / 갱신주기: {interval}초)")
     
     holdings = {}
+    
+    # 글로벌 시장 지표 캐싱용 변수
+    last_market_check = None
+    cached_kospi_close, cached_kospi_ma20, cached_vix = None, None, None
     
     while True:
         # 1. 시간대별 필터 체크
@@ -114,14 +118,18 @@ async def monitor_strategy_and_trade(strategy, access_token, dry_run=True):
         elif current_time > datetime.time(15, 0):
             allow_new_buy = False
 
-        # 2. 글로벌/시장 필터 체크
-        kospi_close, kospi_ma20 = await asyncio.to_thread(get_kospi_trend)
-        current_vix = await asyncio.to_thread(get_vix)
-        
+        # 2. 글로벌/시장 필터 체크 (30분에 1번씩만 조회하여 네트워크 블로킹 방지)
+        current_dt = datetime.datetime.now()
+        if last_market_check is None or (current_dt - last_market_check).total_seconds() > 1800:
+            cached_kospi_close, cached_kospi_ma20 = await asyncio.to_thread(get_kospi_trend)
+            cached_vix = await asyncio.to_thread(get_vix)
+            last_market_check = current_dt
+            logger.info(f"🌐 [시장 지표 갱신] 코스피: {cached_kospi_close} (20일선: {cached_kospi_ma20}) / VIX: {cached_vix}")
+
         market_halt = False
-        if kospi_close and kospi_ma20 and kospi_close < kospi_ma20:
+        if cached_kospi_close and cached_kospi_ma20 and cached_kospi_close < cached_kospi_ma20:
             market_halt = True
-        if current_vix and current_vix > 25.0:
+        if cached_vix and cached_vix > 25.0:
             market_halt = True
 
         target_stocks = await fetch_condition_stocks(access_token, cond_id, name)
@@ -157,7 +165,7 @@ async def monitor_strategy_and_trade(strategy, access_token, dry_run=True):
                     
                 del holdings[stock_code]
 
-        # 4. 신규 종목 매수 감시 (가격 및 유동성 필터 적용)
+        # 4. 신규 종목 매수 감시 (가격 필터 1,000원으로 맞춤)
         if not allow_new_buy or market_halt:
             await asyncio.sleep(interval)
             continue
@@ -174,8 +182,8 @@ async def monitor_strategy_and_trade(strategy, access_token, dry_run=True):
             close_price, vwap = current['close'], current['VWAP']
             ma5, ma15 = current['MA5'], current['MA15']
             
-            # 유동성 및 가격 필터: 2,000원 미만 저가주(동전주) 진입 차단
-            if close_price < 2000:
+            # 가격 필터: 1,000원 미만 저가주(동전주) 진입 차단 (HTS 조건과 일치)
+            if close_price < 1000:
                 continue
                 
             if ma5 > ma15 and close_price > vwap and current['vol_surge']:
