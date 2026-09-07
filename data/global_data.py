@@ -55,8 +55,6 @@ def get_kospi_trend():
         df = kospi.history(period="30d")
         if df.empty:
             return None, None
-        current_price = round(df['Close'].iloc[-1], 2)
-        ma20 = round(df['Close'].rolling(window=20).mean().iloc[-1], 2)
-        return current_price, ma20
+        return round(df['Close'].iloc[-1], 2), round(df['Close'].rolling(window=20).mean().iloc[-1], 2)
     except Exception:
         return None, None
