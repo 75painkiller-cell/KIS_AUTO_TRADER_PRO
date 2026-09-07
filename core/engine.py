@@ -8,6 +8,7 @@ from core.auth import KISTokenManager
 from core.order import execute_order
 from utils.my_logger import logger
 from utils.discord import send_discord_message
+from global_data import get_kospi_trend, get_vix  # 글로벌 시장 필터
 
 async def fetch_condition_stocks(access_token, seq_number, name):
     """실제 KIS HTS 조건검색식 결과 조회 API"""
@@ -87,43 +88,82 @@ def get_3min_trend_data(stock_code, access_token):
         return None
 
 async def monitor_strategy_and_trade(strategy, access_token, dry_run=True):
-    """YAML 전략 조건식 조회 및 데이트레이딩 루프 통합 관리 (Dry-Run 지원)"""
+    """YAML 전략 조건식 조회 및 데이트레이딩 루프 (시장 + 시간 + 트레일링스탑 + 가격/유동성 필터 적용)"""
     name = strategy.get('name', '전략')
     cond_id = strategy.get('condition_id', '1')
     interval = strategy.get('poll_interval_sec', 10)
     
     mode_text = "[🧪 Dry-Run 가상매매]" if dry_run else "[⚡ 실전 주문]"
     logger.info(f"▶ {mode_text} [{name}] 감시 시작 (조건식 번호: {cond_id} / 갱신주기: {interval}초)")
-    holding_stocks = []
+    
+    holdings = {}
     
     while True:
+        # 1. 시간대별 필터 체크
+        current_time = datetime.datetime.now().time()
+        market_open = datetime.time(9, 0)
+        market_close = datetime.time(15, 30)
+        
+        if not (market_open <= current_time <= market_close):
+            await asyncio.sleep(interval)
+            continue
+            
+        allow_new_buy = True
+        if current_time < datetime.time(9, 15):
+            allow_new_buy = False
+        elif current_time > datetime.time(15, 0):
+            allow_new_buy = False
+
+        # 2. 글로벌/시장 필터 체크
+        kospi_close, kospi_ma20 = await asyncio.to_thread(get_kospi_trend)
+        current_vix = await asyncio.to_thread(get_vix)
+        
+        market_halt = False
+        if kospi_close and kospi_ma20 and kospi_close < kospi_ma20:
+            market_halt = True
+        if current_vix and current_vix > 25.0:
+            market_halt = True
+
         target_stocks = await fetch_condition_stocks(access_token, cond_id, name)
         now = datetime.datetime.now().strftime("%H:%M:%S")
         logger.info(f"[{now}] [{name}] 포착 종목: {target_stocks}")
         
-        # 보유 종목 매도 감시
-        for stock_code in holding_stocks[:]:
+        # 3. 보유 종목 매도 및 트레일링 스탑 감시
+        for stock_code in list(holdings.keys()):
             df = await asyncio.to_thread(get_3min_trend_data, stock_code, access_token)
             if df is None or len(df) < 15:
                 continue
                 
             current = df.iloc[-1]
-            if current['MA5'] < current['MA15']:
-                msg = f"📉 [매도 신호] {stock_code} | 현재가: {current['close']} (데드크로스)"
+            current_price = current['close']
+            
+            if current_price > holdings[stock_code]['peak_price']:
+                holdings[stock_code]['peak_price'] = current_price
+                
+            peak_price = holdings[stock_code]['peak_price']
+            trailing_drop_limit = peak_price * (0.985)
+            is_trailing_stop = (current_price <= trailing_drop_limit) and (peak_price > holdings[stock_code]['entry_price'])
+            
+            if current['MA5'] < current['MA15'] or is_trailing_stop:
+                reason = "트레일링 스탑 (수익 보호)" if is_trailing_stop else "데드크로스"
+                msg = f"📉 [매도 신호 - {reason}] {stock_code} | 현재가: {current_price} (최고가: {peak_price})"
                 logger.info(msg)
                 await asyncio.to_thread(send_discord_message, msg)
                 
-                # 주문 분기: Dry-Run이면 가상 체결 로그만, False면 실제 증권사 주문
                 if dry_run:
                     logger.info(f"🧪 [가상 매도 완료] {stock_code} 1주 가상 청산 처리")
                 else:
                     await asyncio.to_thread(execute_order, stock_code, access_token, "sell", "1")
                     
-                holding_stocks.remove(stock_code)
+                del holdings[stock_code]
 
-        # 신규 종목 매수 감시
+        # 4. 신규 종목 매수 감시 (가격 및 유동성 필터 적용)
+        if not allow_new_buy or market_halt:
+            await asyncio.sleep(interval)
+            continue
+
         for stock_code in target_stocks[:]: 
-            if stock_code in holding_stocks:
+            if stock_code in holdings:
                 continue
                 
             df = await asyncio.to_thread(get_3min_trend_data, stock_code, access_token)
@@ -134,18 +174,24 @@ async def monitor_strategy_and_trade(strategy, access_token, dry_run=True):
             close_price, vwap = current['close'], current['VWAP']
             ma5, ma15 = current['MA5'], current['MA15']
             
+            # 유동성 및 가격 필터: 2,000원 미만 저가주(동전주) 진입 차단
+            if close_price < 2000:
+                continue
+                
             if ma5 > ma15 and close_price > vwap and current['vol_surge']:
                 msg = f"🚀 [매수 조건 포착] {stock_code} | 현재가: {close_price} | VWAP: {vwap:.2f}"
                 logger.info(msg)
                 await asyncio.to_thread(send_discord_message, msg)
                 
-                # 주문 분기: Dry-Run이면 가상 체결 로그만, False면 실제 증권사 주문
                 if dry_run:
                     logger.info(f"🧪 [가상 매수 완료] {stock_code} 1주 가상 진입 처리 (실제 자금 사용 안 함)")
                 else:
                     await asyncio.to_thread(execute_order, stock_code, access_token, "buy", "1")
                     
-                holding_stocks.append(stock_code)
+                holdings[stock_code] = {
+                    'entry_price': close_price,
+                    'peak_price': close_price
+                }
                 
         await asyncio.sleep(interval)
 
@@ -160,13 +206,11 @@ async def run_trading_system(bot_config):
         logger.error("❌ config.yaml에 'strategies' 설정이 없거나 비어 있습니다.")
         return
 
-    # config.yaml의 DRY_RUN 설정값 읽기 (기본값: True로 안전 설정)
     dry_run = bot_config.get('DRY_RUN', True)
     mode_text = "🧪 [가상 매매(Dry-Run) 모드]" if dry_run else "⚡ [실전 매매 모드]"
 
     logger.info(f"총 {len(strategies)}개의 전략 엔진을 가동합니다. {mode_text}")
     await asyncio.to_thread(send_discord_message, f"🟢 KIS 자동 매매 시스템 가동 시작 {mode_text}")
     
-    # 전략 엔진 실행 시 dry_run 플래그 전달
     tasks = [monitor_strategy_and_trade(strat, access_token, dry_run=dry_run) for strat in strategies]
     await asyncio.gather(*tasks)

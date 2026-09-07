@@ -23,7 +23,6 @@ def get_usdkrw():
         return round(krw.history(period="1d")['Close'].iloc[-1], 2)
     except Exception:
         return None
-import yfinance as yf
 
 def get_sox():
     """필라델피아 반도체 지수 조회"""
@@ -47,4 +46,17 @@ def get_bitcoin():
         ticker = yf.Ticker("BTC-USD")
         return round(ticker.history(period="1d")['Close'].iloc[-1], 2)
     except Exception:
-        return None    
+        return None
+
+def get_kospi_trend():
+    """코스피 지수(^KS11) 및 20일 이평선 조회 (시장 필터용)"""
+    try:
+        kospi = yf.Ticker("^KS11")
+        df = kospi.history(period="30d")
+        if df.empty:
+            return None, None
+        current_price = round(df['Close'].iloc[-1], 2)
+        ma20 = round(df['Close'].rolling(window=20).mean().iloc[-1], 2)
+        return current_price, ma20
+    except Exception:
+        return None, None
